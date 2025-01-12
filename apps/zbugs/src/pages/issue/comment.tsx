@@ -49,7 +49,7 @@ export const Comment = memo(
     }
     return (
       <div
-        className={classNames({
+        className={classNames('ui-slide-in slide-in-20pc duration-500', {
           [style.commentItem]: true,
           [style.authorComment]:
             comment.creatorID == login.loginState?.decoded.sub,

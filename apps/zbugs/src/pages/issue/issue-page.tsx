@@ -378,7 +378,7 @@ export function IssuePage({onReady}: {onReady: () => void}) {
   const rendering = editing ? {...editing, ...edits} : displayed;
 
   return (
-    <div className="issue-detail-container">
+    <div className="issue-detail-container ui-fade duration-700">
       <MyToastContainer position="bottom" />
       <MyToastContainer position="top" />
       {/* Center column of info */}
