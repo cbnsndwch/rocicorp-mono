@@ -24,7 +24,7 @@ export type Queries<TSchema extends Schema> = {
   [K in keyof TSchema['tables']]: Query<TSchema['tables'][K]>;
 };
 
-type PermissionRule<TAuthDataShape, TSchema extends TableSchema> = (
+export type PermissionRule<TAuthDataShape, TSchema extends TableSchema> = (
   authData: TAuthDataShape,
   eb: ExpressionBuilder<TSchema>,
 ) => Condition;

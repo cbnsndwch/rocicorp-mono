@@ -45,6 +45,7 @@
     "js-xxhash": "^4.0.0",
     "json-custom-numbers": "^3.1.1",
     "kasi": "^1.1.0",
+    "mongodb": "^6.12.0",
     "nanoid": "^5.0.8",
     "pg": "^8.11.3",
     "pg-format": "npm:pg-format-fix@^1.0.5",
@@ -91,9 +92,21 @@
       "types": "./out/zero/src/advanced.d.ts",
       "default": "./out/advanced.js"
     },
+    "./protocol": {
+      "types": "./out/zero-protocol/src/mod.d.ts",
+      "default": "./out/zero-protocol/src/mod.js"
+    },
+    "./schema": {
+      "types": "./out/zero-schema/src/mod.d.ts",
+      "default": "./out/zero-schema/src/mod.js"
+    },
     "./change-protocol/v0": {
       "types": "./out/zero-cache/src/services/change-source/protocol/current/mod.d.ts",
       "default": "./out/zero-cache/src/services/change-source/protocol/current/mod.js"
+    },
+    "./change-protocol": {
+      "types": "./out/zero-cache/src/services/change-source/protocol/mod.d.ts",
+      "default": "./out/change-protocol.js"
     }
   },
   "bin": {

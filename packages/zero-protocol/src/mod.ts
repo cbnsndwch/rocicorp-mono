@@ -13,3 +13,4 @@ export * from './queries-patch.js';
 export * from './row-patch.js';
 export * from './up.js';
 export * from './version.js';
+export * from './ast.js';
