@@ -26,7 +26,7 @@ const SHARD_ID = 'change_source_end_to_mid_test_id';
  * - Applying the changes to the replica with a MessageProcessor
  * - Verifying the resulting SQLite schema and/or data on the replica.
  */
-describe('change-source/pg/end-to-mid-test', () => {
+describe('change-source/pg/end-to-mid-test', {timeout: 10000}, () => {
   let lc: LogContext;
   let upstream: PostgresDB;
   let replicaDbFile: DbFile;
@@ -45,7 +45,7 @@ describe('change-source/pg/end-to-mid-test', () => {
     await upstream.unsafe(`
     CREATE TYPE ENUMZ AS ENUM ('1', '2', '3');
     CREATE TABLE foo(
-      id TEXT PRIMARY KEY,
+      id TEXT NOT NULL,
       int INT4,
       big BIGINT,
       flt FLOAT8,
@@ -64,6 +64,7 @@ describe('change-source/pg/end-to-mid-test', () => {
     -- since the set of allowed schemas is restricted.
     CREATE SCHEMA IF NOT EXISTS zero;
 
+    CREATE UNIQUE INDEX foo_key ON foo (id);
     CREATE PUBLICATION zero_some_public FOR TABLE foo (id, int);
     CREATE PUBLICATION zero_all_test FOR TABLES IN SCHEMA zero;
     `);
@@ -131,8 +132,8 @@ describe('change-source/pg/end-to-mid-test', () => {
   test.each([
     [
       'create table',
-      'CREATE TABLE zero.baz (id INT8 PRIMARY KEY);',
-      [{tag: 'create-table'}],
+      'CREATE TABLE zero.baz (id INT8 CONSTRAINT baz_pkey PRIMARY KEY);',
+      [{tag: 'create-table'}, {tag: 'create-index'}],
       {['zero.baz']: []},
       [
         {
@@ -153,10 +154,16 @@ describe('change-source/pg/end-to-mid-test', () => {
               pos: 2,
             },
           },
-          primaryKey: ['id'],
         },
       ],
-      [],
+      [
+        {
+          columns: {id: 'ASC'},
+          name: 'zero.baz_pkey',
+          tableName: 'zero.baz',
+          unique: true,
+        },
+      ],
     ],
     [
       'rename table',
@@ -182,10 +189,16 @@ describe('change-source/pg/end-to-mid-test', () => {
               pos: 2,
             },
           },
-          primaryKey: ['id'],
         },
       ],
-      [],
+      [
+        {
+          columns: {id: 'ASC'},
+          name: 'zero.baz_pkey',
+          tableName: 'zero.bar',
+          unique: true,
+        },
+      ],
     ],
     [
       'add column',
@@ -218,7 +231,6 @@ describe('change-source/pg/end-to-mid-test', () => {
             },
           },
           name: 'zero.bar',
-          primaryKey: ['id'],
         },
       ],
       [],
@@ -254,7 +266,6 @@ describe('change-source/pg/end-to-mid-test', () => {
             },
           },
           name: 'zero.bar',
-          primaryKey: ['id'],
         },
       ],
       [],
@@ -290,10 +301,54 @@ describe('change-source/pg/end-to-mid-test', () => {
             },
           },
           name: 'zero.bar',
-          primaryKey: ['id'],
         },
       ],
       [],
+    ],
+    [
+      'change the primary key',
+      `
+      ALTER TABLE zero.bar DROP CONSTRAINT baz_pkey;
+      ALTER TABLE zero.bar ADD PRIMARY KEY (handle);
+      `,
+      [{tag: 'drop-index'}, {tag: 'create-index'}],
+      {['zero.bar']: []},
+      [
+        {
+          columns: {
+            ['_0_version']: {
+              characterMaximumLength: null,
+              dataType: 'TEXT',
+              dflt: null,
+              notNull: false,
+              pos: 2,
+            },
+            id: {
+              characterMaximumLength: null,
+              dataType: 'int8',
+              dflt: null,
+              notNull: false,
+              pos: 1,
+            },
+            handle: {
+              characterMaximumLength: null,
+              dataType: 'TEXT',
+              dflt: null,
+              notNull: false,
+              pos: 3,
+            },
+          },
+          name: 'zero.bar',
+        },
+      ],
+      [
+        {
+          columns: {handle: 'ASC'},
+          name: 'zero.bar_pkey',
+          tableName: 'zero.bar',
+          unique: true,
+        },
+      ],
     ],
     [
       'add unique column to automatically generate index',
@@ -333,7 +388,6 @@ describe('change-source/pg/end-to-mid-test', () => {
             },
           },
           name: 'zero.bar',
-          primaryKey: ['id'],
         },
       ],
       [
@@ -383,7 +437,6 @@ describe('change-source/pg/end-to-mid-test', () => {
             },
           },
           name: 'zero.bar',
-          primaryKey: ['id'],
         },
       ],
       [
@@ -433,7 +486,6 @@ describe('change-source/pg/end-to-mid-test', () => {
             },
           },
           name: 'zero.bar',
-          primaryKey: ['id'],
         },
       ],
       [
@@ -476,7 +528,6 @@ describe('change-source/pg/end-to-mid-test', () => {
             },
           },
           name: 'zero.bar',
-          primaryKey: ['id'],
         },
       ],
       [],
@@ -513,7 +564,6 @@ describe('change-source/pg/end-to-mid-test', () => {
               pos: 3,
             },
           },
-          primaryKey: ['id'],
         },
       ],
       [],
@@ -561,7 +611,6 @@ describe('change-source/pg/end-to-mid-test', () => {
               pos: 3,
             },
           },
-          primaryKey: ['id'],
         },
       ],
       [],
@@ -620,7 +669,6 @@ describe('change-source/pg/end-to-mid-test', () => {
               pos: 5,
             },
           },
-          primaryKey: ['id'],
         },
       ],
       [],
@@ -640,6 +688,7 @@ describe('change-source/pg/end-to-mid-test', () => {
         {tag: 'drop-column'},
         {tag: 'drop-column'},
         {tag: 'create-table'},
+        {tag: 'create-index'},
         {tag: 'create-index'},
       ],
       {foo: []},
@@ -669,7 +718,6 @@ describe('change-source/pg/end-to-mid-test', () => {
               pos: 3,
             },
           },
-          primaryKey: ['id'],
         },
         {
           name: 'boo',
@@ -696,7 +744,6 @@ describe('change-source/pg/end-to-mid-test', () => {
               pos: 3,
             },
           },
-          primaryKey: ['id'],
         },
       ],
       [
@@ -704,6 +751,12 @@ describe('change-source/pg/end-to-mid-test', () => {
           name: 'boo_name_key',
           tableName: 'boo',
           columns: {name: 'ASC'},
+          unique: true,
+        },
+        {
+          name: 'boo_pkey',
+          tableName: 'boo',
+          columns: {id: 'ASC'},
           unique: true,
         },
       ],
@@ -743,6 +796,10 @@ describe('change-source/pg/end-to-mid-test', () => {
         {
           tag: 'drop-index',
           id: {schema: 'public', name: 'boo_name_key'},
+        },
+        {
+          tag: 'drop-index',
+          id: {schema: 'public', name: 'boo_pkey'},
         },
         {
           tag: 'drop-table',
@@ -907,7 +964,58 @@ describe('change-source/pg/end-to-mid-test', () => {
               pos: 2,
             },
           },
-          primaryKey: ['id'],
+        },
+      ],
+      [],
+    ],
+    [
+      'no primary key',
+      `
+      CREATE TABLE nopk (a TEXT NOT NULL, b TEXT);
+      ALTER PUBLICATION zero_some_public ADD TABLE nopk;
+
+      INSERT INTO nopk (a, b) VALUES ('foo', 'bar');
+      `,
+      [
+        {tag: 'create-table'},
+        {
+          tag: 'insert',
+          relation: {
+            tag: 'relation',
+            schema: 'public',
+            name: 'nopk',
+            replicaIdentity: 'default',
+            keyColumns: [], // Note: This means is will be replicated to SQLite but not synced to clients.
+          },
+        },
+      ],
+      {nopk: [{a: 'foo', b: 'bar'}]},
+      [
+        {
+          name: 'nopk',
+          columns: {
+            a: {
+              characterMaximumLength: null,
+              dataType: 'TEXT',
+              dflt: null,
+              notNull: false,
+              pos: 1,
+            },
+            b: {
+              characterMaximumLength: null,
+              dataType: 'TEXT',
+              dflt: null,
+              notNull: false,
+              pos: 2,
+            },
+            ['_0_version']: {
+              characterMaximumLength: null,
+              dataType: 'TEXT',
+              dflt: null,
+              notNull: false,
+              pos: 3,
+            },
+          },
         },
       ],
       [],

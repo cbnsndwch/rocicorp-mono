@@ -1,6 +1,7 @@
 import type {SQLQuery} from '@databases/sql';
 import {assert, unreachable} from '../../shared/src/asserts.js';
 import {must} from '../../shared/src/must.js';
+import {difference} from '../../shared/src/set-utils.js';
 import type {Writable} from '../../shared/src/writable.js';
 import type {
   Condition,
@@ -14,7 +15,6 @@ import type {
   SchemaValue,
   ValueType,
 } from '../../zero-schema/src/table-schema.js';
-import {assertOrderingIncludesPK} from '../../zql/src/builder/builder.js';
 import {
   createPredicate,
   transformFilters,
@@ -68,7 +68,6 @@ type Statements = {
   readonly delete: Statement;
   readonly update: Statement | undefined;
   readonly checkExists: Statement;
-  readonly getRow: Statement;
 };
 
 /**
@@ -90,6 +89,8 @@ export class TableSource implements Source {
   readonly #connections: Connection[] = [];
   readonly #table: string;
   readonly #columns: Record<string, SchemaValue>;
+  // Maps sorted columns JSON string (e.g. '["a","b"]) to Set of columns.
+  readonly #uniqueIndexes: Map<string, Set<string>>;
   readonly #primaryKey: PrimaryKey;
   readonly #clientGroupID: string;
   #stmts: Statements;
@@ -105,8 +106,14 @@ export class TableSource implements Source {
     this.#clientGroupID = clientGroupID;
     this.#table = tableName;
     this.#columns = columns;
+    this.#uniqueIndexes = getUniqueIndexes(db, tableName);
     this.#primaryKey = primaryKey;
     this.#stmts = this.#getStatementsFor(db);
+
+    assert(
+      this.#uniqueIndexes.has(JSON.stringify([...primaryKey].sort())),
+      `primary key ${primaryKey} does not have a UNIQUE index`,
+    );
   }
 
   get table() {
@@ -126,7 +133,6 @@ export class TableSource implements Source {
     if (cached) {
       return cached;
     }
-    assertPrimaryKeyMatch(db, this.#table, this.#primaryKey);
 
     const stmts = {
       cache: new StatementCache(db),
@@ -175,18 +181,6 @@ export class TableSource implements Source {
           )} LIMIT 1`,
         ),
       ),
-      getRow: db
-        .prepare(
-          compile(
-            sql`SELECT ${this.#allColumns} FROM ${sql.ident(
-              this.#table,
-            )} WHERE ${sql.join(
-              this.#primaryKey.map(k => sql`${sql.ident(k)}=?`),
-              sql` AND`,
-            )}`,
-          ),
-        )
-        .safeIntegers(true),
     };
     this.#dbCache.set(db, stmts);
     return stmts;
@@ -203,7 +197,7 @@ export class TableSource implements Source {
     return {
       tableName: this.#table,
       columns: this.#columns,
-      primaryKey: this.#primaryKey,
+      primaryKey: this.#selectPrimaryKeyFor(connection.sort),
       sort: connection.sort,
       relationships: {},
       isHidden: false,
@@ -242,7 +236,6 @@ export class TableSource implements Source {
       compareRows: makeComparator(sort),
     };
     const schema = this.#getSchema(connection);
-    assertOrderingIncludesPK(sort, this.#primaryKey);
 
     this.#connections.push(connection);
     return input;
@@ -435,15 +428,39 @@ export class TableSource implements Source {
     }
   }
 
+  #getRowStmtCache = new Map<string, string>();
+
+  #getRowStmt(keyCols: string[]): string {
+    const keyString = JSON.stringify(keyCols);
+    let stmt = this.#getRowStmtCache.get(keyString);
+    if (!stmt) {
+      stmt = compile(
+        sql`SELECT ${this.#allColumns} FROM ${sql.ident(
+          this.#table,
+        )} WHERE ${sql.join(
+          keyCols.map(k => sql`${sql.ident(k)}=?`),
+          sql` AND`,
+        )}`,
+      );
+      this.#getRowStmtCache.set(keyString, stmt);
+    }
+    return stmt;
+  }
+
   /**
-   * Retrieves a row from the backing DB by its primary key, or `undefined` if such a
+   * Retrieves a row from the backing DB by a unique key, or `undefined` if such a
    * row does not exist. This is not used in the IVM pipeline but is useful
    * for retrieving data that is consistent with the state (and type
-   * semantics) of the pipeline.
+   * semantics) of the pipeline. Note that this key may not necessarily correspond
+   * to the `primaryKey` with which this TableSource.
    */
-  getRow(pk: Row): Row | undefined {
-    const row = this.#stmts.getRow.get<Row>(
-      this.#primaryKey.map(key => pk[key]),
+  getRow(rowKey: Row): Row | undefined {
+    const keyCols = Object.keys(rowKey);
+    const keyVals = Object.values(rowKey);
+
+    const stmt = this.#getRowStmt(keyCols);
+    const row = this.#stmts.cache.use(stmt, cached =>
+      cached.statement.safeIntegers(true).get<Row>(keyVals),
     );
     if (row) {
       return fromSQLiteTypes(this.#columns, row);
@@ -505,6 +522,21 @@ export class TableSource implements Source {
     }
 
     return query;
+  }
+
+  #selectPrimaryKeyFor(sort: Ordering) {
+    const columns = new Set(sort.map(([col]) => col));
+    for (const uniqueColumns of this.#uniqueIndexes.values()) {
+      if (difference(uniqueColumns, columns).size === 0) {
+        assert(uniqueColumns.size > 0);
+        return [...uniqueColumns] as unknown as PrimaryKey;
+      }
+    }
+    throw new Error(
+      `sort ordering ${JSON.stringify(
+        sort,
+      )} does not include uniquely indexed columns`,
+    );
   }
 }
 
@@ -685,24 +717,31 @@ function gatherStartConstraints(
   return sql`(${sql.join(constraints, sql` OR `)})`;
 }
 
-function assertPrimaryKeyMatch(
+function getUniqueIndexes(
   db: Database,
   tableName: string,
-  primaryKey: PrimaryKey,
-) {
+): Map<string, Set<string>> {
   const sqlAndBindings = format(
-    sql`SELECT name FROM pragma_table_info(${tableName}) WHERE pk > 0`,
+    sql`
+    SELECT idx.name, json_group_array(col.name) as columnsJSON
+      FROM sqlite_master as idx
+      JOIN pragma_index_list(idx.tbl_name) AS info ON info.name = idx.name
+      JOIN pragma_index_info(idx.name) as col
+      WHERE idx.tbl_name = ${tableName} AND
+            idx.type = 'index' AND 
+            info."unique" != 0
+      GROUP BY idx.name
+      ORDER BY idx.name`,
   );
   const stmt = db.prepare(sqlAndBindings.text);
-  const pkColumns = new Set(
-    stmt.all<Row>(...sqlAndBindings.values).map(row => row.name),
+  const indexes = stmt.all<{columnsJSON: string}>(...sqlAndBindings.values);
+  return new Map(
+    indexes.map(({columnsJSON}) => {
+      const columns = JSON.parse(columnsJSON);
+      const set = new Set<string>(columns);
+      return [JSON.stringify(columns.sort()), set];
+    }),
   );
-
-  assert(pkColumns.size === primaryKey.length);
-
-  for (const key of primaryKey) {
-    assert(pkColumns.has(key));
-  }
 }
 
 function toSQLiteTypes(

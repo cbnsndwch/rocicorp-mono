@@ -14,12 +14,8 @@ import {
   runtimeDebugStats,
 } from '../../../../zqlite/src/runtime-debug.js';
 import {TableSource} from '../../../../zqlite/src/table-source.js';
-import {listTables} from '../../db/lite-tables.js';
-import type {LiteAndZqlSpec, LiteTableSpec} from '../../db/specs.js';
-import {
-  dataTypeToZqlValueType,
-  mapLiteDataTypeToZqlSchemaValue,
-} from '../../types/lite.js';
+import {computeZqlSpecs} from '../../db/lite-tables.js';
+import type {LiteAndZqlSpec} from '../../db/specs.js';
 import type {RowKey} from '../../types/row-key.js';
 import type {SchemaVersions} from '../../types/schema-versions.js';
 import {getSubscriptionState} from '../replicator/schema/replication-state.js';
@@ -51,29 +47,6 @@ export type RowEdit = {
 };
 
 export type RowChange = RowAdd | RowRemove | RowEdit;
-
-/** Normalized TableSpec filters out columns with unsupported data types. */
-export type NormalizedTableSpec = LiteTableSpec;
-
-export function normalize(tableSpec: LiteTableSpec): NormalizedTableSpec {
-  const {primaryKey, columns} = tableSpec;
-  const normalized = {
-    ...tableSpec,
-
-    // Only include columns for which the mapped ZQL Value is defined.
-    columns: Object.fromEntries(
-      Object.entries(columns).filter(([_, spec]) =>
-        dataTypeToZqlValueType(spec.dataType),
-      ),
-    ),
-
-    // Primary keys are normalized here so that downstream
-    // normalization does not need to create new objects.
-    // See row-key.ts: normalizedKeyOrder()
-    primaryKey: [...primaryKey].sort(),
-  };
-  return normalized;
-}
 
 type Pipeline = {
   readonly input: Input;
@@ -117,8 +90,7 @@ export class PipelineDriver {
     assert(!this.#snapshotter.initialized(), 'Already initialized');
 
     const {db} = this.#snapshotter.init().current();
-    this.#tableSpecs = new Map();
-    setSpecs(listTables(db.db), this.#tableSpecs);
+    this.#tableSpecs = computeZqlSpecs(this.#lc, db.db);
     const {replicaVersion} = getSubscriptionState(db);
     this.#replicaVersion = replicaVersion;
   }
@@ -179,7 +151,7 @@ export class PipelineDriver {
     tableSpecs.clear();
 
     const {db} = this.#snapshotter.current();
-    setSpecs(listTables(db.db), tableSpecs);
+    computeZqlSpecs(this.#lc, db.db, tableSpecs);
     const {replicaVersion} = getSubscriptionState(db);
     this.#replicaVersion = replicaVersion;
   }
@@ -238,7 +210,11 @@ export class PipelineDriver {
     }
 
     const res = input.fetch({});
-    const streamer = new Streamer().accumulate(hash, schema, toAdds(res));
+    const streamer = new Streamer(must(this.#tableSpecs)).accumulate(
+      hash,
+      schema,
+      toAdds(res),
+    );
     yield* streamer.stream();
 
     const hydrationTimeMs = Date.now() - start;
@@ -354,11 +330,12 @@ export class PipelineDriver {
       throw new Error(
         `table '${tableName}' is not one of: ${[...this.#tableSpecs.keys()]
           .filter(t => !t.includes('.') && !t.startsWith('_litestream_'))
-          .sort()}`,
+          .sort()}. ` +
+          `Check the spelling and ensure that the table has a primary key.`,
       );
     }
     const {primaryKey} = tableSpec.tableSpec;
-    assert(primaryKey.length);
+    assert(primaryKey?.length);
 
     const {db} = this.#snapshotter.current();
     source = new TableSource(
@@ -394,7 +371,7 @@ export class PipelineDriver {
 
   #startAccumulating() {
     assert(this.#streamer === null);
-    this.#streamer = new Streamer();
+    this.#streamer = new Streamer(must(this.#tableSpecs));
   }
 
   #stopAccumulating(): Streamer {
@@ -406,6 +383,12 @@ export class PipelineDriver {
 }
 
 class Streamer {
+  #tableSpecs: Map<string, LiteAndZqlSpec>;
+
+  constructor(tableSpecs: Map<string, LiteAndZqlSpec>) {
+    this.#tableSpecs = tableSpecs;
+  }
+
   readonly #changes: [
     hash: string,
     schema: SourceSchema,
@@ -473,7 +456,14 @@ class Streamer {
     op: 'add' | 'remove' | 'edit',
     nodes: Iterable<Node>,
   ): Iterable<RowChange> {
-    const {tableName: table, primaryKey, system} = schema;
+    const {tableName: table, system} = schema;
+
+    // The primaryKey here is used for referencing rows in CVR and del-row
+    // patches sent in pokes. This is the "unionKey", i.e. the union of all
+    // columns in unique indexes. This allows clients to migrate from, e.g.
+    // pk1 to pk2, as del-patches will be keyed by [...pk1, ...pk2].
+    const primaryKey = must(this.#tableSpecs.get(table)).tableSpec.unionKey;
+
     // We do not sync rows gathered by the permissions
     // system to the client.
     if (system === 'permissions') {
@@ -498,24 +488,6 @@ class Streamer {
       }
     }
   }
-}
-
-export function setSpecs(
-  specs: LiteTableSpec[],
-  tableSpecs: Map<string, LiteAndZqlSpec>,
-) {
-  specs.forEach(spec => {
-    const tableSpec = normalize(spec);
-    tableSpecs.set(spec.name, {
-      tableSpec,
-      zqlSpec: Object.fromEntries(
-        Object.entries(tableSpec.columns).map(([name, {dataType}]) => [
-          name,
-          mapLiteDataTypeToZqlSchemaValue(dataType),
-        ]),
-      ),
-    });
-  });
 }
 
 function* toAdds(nodes: Iterable<Node>): Iterable<Change> {

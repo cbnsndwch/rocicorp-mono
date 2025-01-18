@@ -6,7 +6,6 @@ import path from 'node:path';
 import {pid} from 'node:process';
 import {assert} from '../../../shared/src/asserts.js';
 import type {JSONValue} from '../../../shared/src/json.js';
-import {must} from '../../../shared/src/must.js';
 import {randInt} from '../../../shared/src/rand.js';
 import * as v from '../../../shared/src/valita.js';
 import type {Condition} from '../../../zero-protocol/src/ast.js';
@@ -21,12 +20,11 @@ import {
   primaryKeyValueSchema,
   type PrimaryKeyValue,
 } from '../../../zero-protocol/src/primary-key.js';
+import type {Schema} from '../../../zero-schema/src/builder/schema-builder.js';
 import type {
   PermissionsConfig,
   Policy,
 } from '../../../zero-schema/src/compiled-permissions.js';
-import type {Schema} from '../../../zero-schema/src/schema.js';
-import type {TableSchema} from '../../../zero-schema/src/table-schema.js';
 import type {BuilderDelegate} from '../../../zql/src/builder/builder.js';
 import {
   bindStaticParameters,
@@ -42,11 +40,10 @@ import {
   TableSource,
 } from '../../../zqlite/src/table-source.js';
 import type {ZeroConfig} from '../config/zero-config.js';
-import {listTables} from '../db/lite-tables.js';
+import {computeZqlSpecs} from '../db/lite-tables.js';
 import type {LiteAndZqlSpec} from '../db/specs.js';
 import {StatementRunner} from '../db/statements.js';
 import {DatabaseStorage} from '../services/view-syncer/database-storage.js';
-import {setSpecs} from '../services/view-syncer/pipeline-driver.js';
 import {mapLiteDataTypeToZqlSchemaValue} from '../types/lite.js';
 
 type Phase = 'preMutation' | 'postMutation';
@@ -97,8 +94,7 @@ export class WriteAuthorizerImpl implements WriteAuthorizer {
       getSource: name => this.#getSource(name),
       createStorage: () => cgStorage.createStorage(),
     };
-    this.#tableSpecs = new Map();
-    setSpecs(listTables(replica), this.#tableSpecs);
+    this.#tableSpecs = computeZqlSpecs(this.#lc, replica);
     this.#statementRunner = new StatementRunner(replica);
   }
 
@@ -294,12 +290,7 @@ export class WriteAuthorizerImpl implements WriteAuthorizer {
     }
 
     const rowPolicies = rules.row;
-    let rowQuery = authQuery(
-      must(
-        this.#schema.tables[op.tableName],
-        'No schema found for table ' + op.tableName,
-      ),
-    );
+    let rowQuery = authQuery(this.#schema, op.tableName);
     op.primaryKey.forEach(pk => {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       rowQuery = rowQuery.where(pk, '=', op.value[pk] as any);
@@ -416,7 +407,7 @@ export class WriteAuthorizerImpl implements WriteAuthorizer {
     applicableRowPolicy: Policy | undefined,
     applicableCellPolicies: Policy[],
     authData: JWTPayload | undefined,
-    rowQuery: Query<TableSchema>,
+    rowQuery: Query<Schema, string>,
   ) {
     if (
       applicableRowPolicy === undefined &&
@@ -441,7 +432,7 @@ export class WriteAuthorizerImpl implements WriteAuthorizer {
   #passesPolicy(
     policy: Policy | undefined,
     authData: JWTPayload | undefined,
-    rowQuery: Query<TableSchema>,
+    rowQuery: Query<Schema, string>,
   ) {
     if (policy === undefined) {
       return true;
@@ -449,7 +440,7 @@ export class WriteAuthorizerImpl implements WriteAuthorizer {
     if (policy.length === 0) {
       return false;
     }
-    let rowQueryAst = (rowQuery as AuthQuery<TableSchema>).ast;
+    let rowQueryAst = (rowQuery as AuthQuery<Schema, string>).ast;
     rowQueryAst = bindStaticParameters(
       {
         ...rowQueryAst,

@@ -1,11 +1,8 @@
 import type {Query} from '../../zql/src/query/query.js';
-import type {Schema} from './schema.js';
-import type {TableSchema} from './table-schema.js';
 import type {
   AssetPermissions as CompiledAssetPermissions,
   PermissionsConfig as CompiledPermissionsConfig,
 } from './compiled-permissions.js';
-import {normalizeSchema} from './normalized-schema.js';
 import {AuthQuery} from '../../zql/src/query/auth-query.js';
 import {
   toStaticParam,
@@ -15,40 +12,49 @@ import {
 import {staticParam} from '../../zql/src/query/query-impl.js';
 import type {ExpressionBuilder} from '../../zql/src/query/expression.js';
 import {assert} from '../../shared/src/asserts.js';
+import type {Schema} from './mod.js';
 
 export const ANYONE_CAN = undefined;
 export const NOBODY_CAN = [];
 export type Anchor = 'authData' | 'preMutationRow';
 
 export type Queries<TSchema extends Schema> = {
-  [K in keyof TSchema['tables']]: Query<TSchema['tables'][K]>;
+  [K in keyof TSchema['tables']]: Query<Schema, K & string>;
 };
 
 export type PermissionRule<TAuthDataShape, TSchema extends TableSchema> = (
+  TAuthDataShape,
+  TSchema extends Schema,
+  TTable extends keyof TSchema['tables'] & string,
+> = (
   authData: TAuthDataShape,
-  eb: ExpressionBuilder<TSchema>,
+  eb: ExpressionBuilder<TSchema, TTable>,
 ) => Condition;
 
-type AssetPermissions<TAuthDataShape, TSchema extends TableSchema> = {
+type AssetPermissions<
+  TAuthDataShape,
+  TSchema extends Schema,
+  TTable extends keyof TSchema['tables'] & string,
+> = {
   // Why an array of rules?: https://github.com/rocicorp/mono/pull/3184/files#r1869680716
-  select?: PermissionRule<TAuthDataShape, TSchema>[] | undefined;
-  insert?: PermissionRule<TAuthDataShape, TSchema>[] | undefined;
+  select?: PermissionRule<TAuthDataShape, TSchema, TTable>[] | undefined;
+  insert?: PermissionRule<TAuthDataShape, TSchema, TTable>[] | undefined;
   update?:
     | {
-        preMutation?: PermissionRule<TAuthDataShape, TSchema>[];
-        postMutation?: PermissionRule<TAuthDataShape, TSchema>[];
+        preMutation?: PermissionRule<TAuthDataShape, TSchema, TTable>[];
+        postMutation?: PermissionRule<TAuthDataShape, TSchema, TTable>[];
       }
     | undefined;
-  delete?: PermissionRule<TAuthDataShape, TSchema>[] | undefined;
+  delete?: PermissionRule<TAuthDataShape, TSchema, TTable>[] | undefined;
 };
 
 export type PermissionsConfig<TAuthDataShape, TSchema extends Schema> = {
   [K in keyof TSchema['tables']]?: {
-    row?: AssetPermissions<TAuthDataShape, TSchema['tables'][K]> | undefined;
+    row?: AssetPermissions<TAuthDataShape, TSchema, K & string> | undefined;
     cell?:
       | {
           [C in keyof TSchema['tables'][K]['columns']]?: Omit<
-            AssetPermissions<TAuthDataShape, TSchema['tables'][K]>,
+            AssetPermissions<TAuthDataShape, TSchema, K & string>,
             'cell'
           >;
         }
@@ -62,13 +68,12 @@ export async function definePermissions<TAuthDataShape, TSchema extends Schema>(
     | Promise<PermissionsConfig<TAuthDataShape, TSchema>>
     | PermissionsConfig<TAuthDataShape, TSchema>,
 ): Promise<CompiledPermissionsConfig | undefined> {
-  const normalizedSchema = normalizeSchema(schema);
   const expressionBuilders = {} as Record<
     string,
-    ExpressionBuilder<TableSchema>
+    ExpressionBuilder<Schema, string>
   >;
-  for (const [name, tableSchema] of Object.entries(normalizedSchema.tables)) {
-    expressionBuilders[name] = new AuthQuery(tableSchema).expressionBuilder();
+  for (const name of Object.keys(schema.tables)) {
+    expressionBuilders[name] = new AuthQuery(schema, name).expressionBuilder();
   }
 
   const config = await definer();
@@ -77,7 +82,7 @@ export async function definePermissions<TAuthDataShape, TSchema extends Schema>(
 
 function compilePermissions<TAuthDataShape, TSchema extends Schema>(
   authz: PermissionsConfig<TAuthDataShape, TSchema> | undefined,
-  expressionBuilders: Record<string, ExpressionBuilder<TableSchema>>,
+  expressionBuilders: Record<string, ExpressionBuilder<Schema, string>>,
 ): CompiledPermissionsConfig | undefined {
   if (!authz) {
     return undefined;
@@ -93,9 +98,13 @@ function compilePermissions<TAuthDataShape, TSchema extends Schema>(
   return ret;
 }
 
-function compileRowConfig<TAuthDataShape, TSchema extends TableSchema>(
-  rowRules: AssetPermissions<TAuthDataShape, TSchema> | undefined,
-  expressionBuilder: ExpressionBuilder<TSchema>,
+function compileRowConfig<
+  TAuthDataShape,
+  TSchema extends Schema,
+  TTable extends keyof TSchema['tables'] & string,
+>(
+  rowRules: AssetPermissions<TAuthDataShape, TSchema, TTable> | undefined,
+  expressionBuilder: ExpressionBuilder<TSchema, TTable>,
 ): CompiledAssetPermissions | undefined {
   if (!rowRules) {
     return undefined;
@@ -122,9 +131,13 @@ function compileRowConfig<TAuthDataShape, TSchema extends TableSchema>(
  *
  * Please read: https://github.com/rocicorp/mono/pull/3184/files#r1869680716
  */
-function compileRules<TAuthDataShape, TSchema extends TableSchema>(
-  rules: PermissionRule<TAuthDataShape, TSchema>[] | undefined,
-  expressionBuilder: ExpressionBuilder<TSchema>,
+function compileRules<
+  TAuthDataShape,
+  TSchema extends Schema,
+  TTable extends keyof TSchema['tables'] & string,
+>(
+  rules: PermissionRule<TAuthDataShape, TSchema, TTable>[] | undefined,
+  expressionBuilder: ExpressionBuilder<TSchema, TTable>,
 ): ['allow', Condition][] | undefined {
   if (!rules) {
     return undefined;
@@ -139,11 +152,15 @@ function compileRules<TAuthDataShape, TSchema extends TableSchema>(
   );
 }
 
-function compileCellConfig<TAuthDataShape, TSchema extends TableSchema>(
+function compileCellConfig<
+  TAuthDataShape,
+  TSchema extends Schema,
+  TTable extends keyof TSchema['tables'] & string,
+>(
   cellRules:
-    | Record<string, AssetPermissions<TAuthDataShape, TSchema>>
+    | Record<string, AssetPermissions<TAuthDataShape, TSchema, TTable>>
     | undefined,
-  expressionBuilder: ExpressionBuilder<TSchema>,
+  expressionBuilder: ExpressionBuilder<TSchema, TTable>,
 ): Record<string, CompiledAssetPermissions> | undefined {
   if (!cellRules) {
     return undefined;

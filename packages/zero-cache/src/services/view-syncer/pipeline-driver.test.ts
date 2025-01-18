@@ -43,13 +43,14 @@ describe('view-syncer/pipeline-driver', () => {
     initChangeLog(db);
     db.exec(`
       CREATE TABLE "zero.schemaVersions" (
-        "lock"                INTEGER PRIMARY KEY,
-        "minSupportedVersion" INTEGER,
-        "maxSupportedVersion" INTEGER,
+        -- Note: Using "INT" to avoid the special semantics of "INTEGER PRIMARY KEY" in SQLite.
+        "lock"                INT PRIMARY KEY,
+        "minSupportedVersion" INT,
+        "maxSupportedVersion" INT,
         _0_version            TEXT NOT NULL
       );
       INSERT INTO "zero.schemaVersions" ("lock", "minSupportedVersion", "maxSupportedVersion", _0_version)    
-        VALUES (1, 1, 1, '123');  
+        VALUES (1, 1, 1, '123');
       CREATE TABLE issues (
         id TEXT PRIMARY KEY,
         closed BOOL,
@@ -65,9 +66,11 @@ describe('view-syncer/pipeline-driver', () => {
       CREATE TABLE "issueLabels" (
         issueID TEXT,
         labelID TEXT,
+        legacyID TEXT NOT NULL,
         _0_version TEXT NOT NULL,
         PRIMARY KEY (issueID, labelID)
       );
+      CREATE UNIQUE INDEX issues_a ON issueLabels (legacyID);  -- Test that this doesn't trip up IVM.
       CREATE TABLE "labels" (
         id TEXT PRIMARY KEY,
         name TEXT,
@@ -82,7 +85,7 @@ describe('view-syncer/pipeline-driver', () => {
       INSERT INTO COMMENTS (id, issueID, upvotes, _0_version) VALUES ('21', '2', 10000, '123');
       INSERT INTO COMMENTS (id, issueID, upvotes, _0_version) VALUES ('22', '2', 20000, '123');
 
-      INSERT INTO "issueLabels" (issueID, labelID, _0_version) VALUES ('1', '1', '123');
+      INSERT INTO "issueLabels" (issueID, labelID, legacyID, _0_version) VALUES ('1', '1', '1-1', '123');
       INSERT INTO "labels" (id, name, _0_version) VALUES ('1', 'bug', '123');
       `);
     replicator = fakeReplicator(lc, db);
@@ -692,7 +695,11 @@ describe('view-syncer/pipeline-driver', () => {
 
     replicator.processTransaction(
       '134',
-      messages.delete('issueLabels', {issueID: '1', labelID: '1'}),
+      messages.delete('issueLabels', {
+        issueID: '1',
+        labelID: '1',
+        legacyID: '1-1',
+      }),
     );
 
     expect([...pipelines.advance().changes]).toMatchInlineSnapshot(`
@@ -703,6 +710,7 @@ describe('view-syncer/pipeline-driver', () => {
           "rowKey": {
             "issueID": "1",
             "labelID": "1",
+            "legacyID": "1-1",
           },
           "table": "issueLabels",
           "type": "remove",
@@ -777,10 +785,12 @@ describe('view-syncer/pipeline-driver', () => {
             "_0_version": "123",
             "issueID": "1",
             "labelID": "1",
+            "legacyID": "1-1",
           },
           "rowKey": {
             "issueID": "1",
             "labelID": "1",
+            "legacyID": "1-1",
           },
           "table": "issueLabels",
           "type": "add",
@@ -896,7 +906,11 @@ describe('view-syncer/pipeline-driver', () => {
 
     replicator.processTransaction(
       '134',
-      messages.insert('issueLabels', {issueID: '2', labelID: '1'}),
+      messages.insert('issueLabels', {
+        issueID: '2',
+        labelID: '1',
+        legacyID: '2-1',
+      }),
     );
 
     expect([...pipelines.advance().changes]).toMatchInlineSnapshot(`
@@ -920,10 +934,12 @@ describe('view-syncer/pipeline-driver', () => {
             "_0_version": "134",
             "issueID": "2",
             "labelID": "1",
+            "legacyID": "2-1",
           },
           "rowKey": {
             "issueID": "2",
             "labelID": "1",
+            "legacyID": "2-1",
           },
           "table": "issueLabels",
           "type": "add",
@@ -947,10 +963,12 @@ describe('view-syncer/pipeline-driver', () => {
             "_0_version": "134",
             "issueID": "2",
             "labelID": "1",
+            "legacyID": "2-1",
           },
           "rowKey": {
             "issueID": "2",
             "labelID": "1",
+            "legacyID": "2-1",
           },
           "table": "issueLabels",
           "type": "add",
@@ -973,7 +991,11 @@ describe('view-syncer/pipeline-driver', () => {
 
     replicator.processTransaction(
       '135',
-      messages.delete('issueLabels', {issueID: '2', labelID: '1'}),
+      messages.delete('issueLabels', {
+        issueID: '2',
+        labelID: '1',
+        legacyID: '2-1',
+      }),
     );
 
     expect([...pipelines.advance().changes]).toMatchInlineSnapshot(`
@@ -984,6 +1006,7 @@ describe('view-syncer/pipeline-driver', () => {
           "rowKey": {
             "issueID": "2",
             "labelID": "1",
+            "legacyID": "2-1",
           },
           "table": "issueLabels",
           "type": "remove",
@@ -1012,6 +1035,7 @@ describe('view-syncer/pipeline-driver', () => {
           "rowKey": {
             "issueID": "2",
             "labelID": "1",
+            "legacyID": "2-1",
           },
           "table": "issueLabels",
           "type": "remove",
@@ -1060,6 +1084,25 @@ describe('view-syncer/pipeline-driver', () => {
       issueID: '3',
       upvotes: 20000,
       ['_0_version']: '134',
+    });
+
+    [...pipelines.addQuery('hash2', ISSUES_QUERY_WITH_EXISTS)];
+
+    // getRow should work with any row key
+    expect(
+      pipelines.getRow('issueLabels', {issueID: '1', labelID: '1'}),
+    ).toEqual({
+      issueID: '1',
+      labelID: '1',
+      legacyID: '1-1',
+      ['_0_version']: '123',
+    });
+
+    expect(pipelines.getRow('issueLabels', {legacyID: '1-1'})).toEqual({
+      issueID: '1',
+      labelID: '1',
+      legacyID: '1-1',
+      ['_0_version']: '123',
     });
   });
 

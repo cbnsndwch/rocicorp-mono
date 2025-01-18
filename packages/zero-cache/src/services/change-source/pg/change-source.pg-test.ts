@@ -34,7 +34,7 @@ import {dropEventTriggerStatements} from './schema/ddl-test-utils.js';
 
 const SHARD_ID = 'change_source_test_id';
 
-describe('change-source/pg', () => {
+describe('change-source/pg', {timeout: 10000}, () => {
   let logSink: TestLogSink;
   let lc: LogContext;
   let upstream: PostgresDB;
@@ -421,8 +421,8 @@ describe('change-source/pg', () => {
       // effectively freeze replication.
       await upstream.begin(async tx => {
         await tx`INSERT INTO foo(id) VALUES('wide')`;
-        await tx`ALTER TABLE foo DROP CONSTRAINT foo_pk`;
-        await tx`INSERT INTO foo(id) VALUES('world')`;
+        await tx`ALTER TABLE foo RENAME TO "invalid/character$"`;
+        await tx`INSERT INTO "invalid/character$"(id) VALUES('world')`;
       });
 
       // The transaction should be rolled back.
@@ -445,7 +445,7 @@ describe('change-source/pg', () => {
         {component: 'change-source'},
         [
           expect.stringMatching(
-            'UnsupportedTableSchemaError: Table "foo" does not have a PRIMARY KEY',
+            'UnsupportedTableSchemaError: Table "invalid/character\\$" has invalid characters.',
           ),
           {tag: 'message'},
         ],

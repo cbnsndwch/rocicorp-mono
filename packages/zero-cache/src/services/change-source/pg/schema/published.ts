@@ -2,7 +2,7 @@ import {literal} from 'pg-format';
 import type postgres from 'postgres';
 import {equals} from '../../../../../../shared/src/set-utils.js';
 import * as v from '../../../../../../shared/src/valita.js';
-import {indexSpec, publishedTableSpec} from '../../../../db/specs.js';
+import {publishedIndexSpec, publishedTableSpec} from '../../../../db/specs.js';
 
 export function publishedTableQuery(publications: string[]) {
   return `
@@ -10,6 +10,7 @@ WITH published_columns AS (SELECT
   pc.oid::int8 AS "oid",
   nspname AS "schema", 
   pc.relname AS "name", 
+  pc.relreplident AS "replicaIdentity",
   attnum AS "pos", 
   attname AS "col", 
   pt.typname AS "type", 
@@ -39,6 +40,7 @@ tables AS (SELECT json_build_object(
   'oid', "oid",
   'schema', "schema", 
   'name', "name", 
+  'replicaIdentity', "replicaIdentity",
   'columns', json_object_agg(
     DISTINCT
     col,
@@ -69,7 +71,7 @@ tables AS (SELECT json_build_object(
     "publication", 
     jsonb_build_object('rowFilter', "rowFilter")
   )
-) AS "table" FROM published_columns GROUP BY "schema", "name", "oid")
+) AS "table" FROM published_columns GROUP BY "schema", "name", "oid", "replicaIdentity")
 
 SELECT COALESCE(json_agg("table"), '[]'::json) as "tables" FROM tables
   `;
@@ -95,7 +97,9 @@ export function indexDefinitionsQuery(publications: string[]) {
       pg_indexes.indexname as "name",
       index_column.name as "col",
       CASE WHEN pg_index.indoption[index_column.pos-1] & 1 = 1 THEN 'DESC' ELSE 'ASC' END as "dir",
-      pg_index.indisunique as "unique"
+      pg_index.indisunique as "unique",
+      pg_index.indisreplident as "isReplicaIdentity",
+      pg_index.indimmediate as "isImmediate"
     FROM pg_indexes
     JOIN pg_namespace ON pg_indexes.schemaname = pg_namespace.nspname
     JOIN pg_class pc ON
@@ -112,8 +116,9 @@ export function indexDefinitionsQuery(publications: string[]) {
     ) AS index_column ON true
     LEFT JOIN pg_constraint ON pg_constraint.conindid = pc.oid
     WHERE pb.pubname IN (${literal(publications)})
-      AND pg_constraint.contype is distinct from 'p'
-      AND pg_constraint.contype is distinct from 'f'
+      AND pg_index.indexprs IS NULL
+      AND pg_index.indpred IS NULL
+      AND (pg_constraint.contype IS NULL OR pg_constraint.contype IN ('p', 'u'))
     ORDER BY
       pg_indexes.schemaname,
       pg_indexes.tablename,
@@ -125,16 +130,18 @@ export function indexDefinitionsQuery(publications: string[]) {
       'tableName', "tableName",
       'name', "name",
       'unique', "unique",
+      'isReplicaIdentity', "isReplicaIdentity",
+      'isImmediate', "isImmediate",
       'columns', json_object_agg(DISTINCT "col", "dir")
     ) AS index FROM indexed_columns 
-      GROUP BY "schema", "tableName", "name", "unique")
+      GROUP BY "schema", "tableName", "name", "unique", "isReplicaIdentity", "isImmediate")
 
     SELECT COALESCE(json_agg("index"), '[]'::json) as "indexes" FROM indexes
   `;
 }
 
 const publishedTablesSchema = v.object({tables: v.array(publishedTableSpec)});
-const publishedIndexesSchema = v.object({indexes: v.array(indexSpec)});
+const publishedIndexesSchema = v.object({indexes: v.array(publishedIndexSpec)});
 
 export const publishedSchema = publishedTablesSchema.extend(
   publishedIndexesSchema.shape,

@@ -1,311 +1,247 @@
-import {expect, test} from 'vitest';
-import {createSchema} from './schema.js';
+import {expect, expectTypeOf, test} from 'vitest';
+import {createSchema} from './mod.js';
+import {number, string, table} from './builder/table-builder.js';
+import {relationships} from './builder/relationship-builder.js';
 
-test('Unexpected tableName should throw', () => {
-  const schema = {
-    version: 1,
-    tables: {
-      foo: {
-        tableName: 'foo',
-        primaryKey: 'id',
-        columns: {
-          id: {type: 'number'},
-        },
-      },
-      bar: {
-        tableName: 'bars',
-        primaryKey: 'id',
-        columns: {
-          id: {type: 'number'},
-        },
-      },
-    },
-  } as const;
-  expect(() => createSchema(schema)).toThrowErrorMatchingInlineSnapshot(
-    `[Error: Table name mismatch: "bars" !== "bar"]`,
+test('Key name does not matter', () => {
+  const schema = createSchema(
+    1,
+    {foo: table('bar').columns({id: string()}).primaryKey('id')},
+    {},
+  );
+
+  expectTypeOf(schema.tables.bar).toEqualTypeOf<{
+    name: 'bar';
+    columns: {id: {type: 'string'; optional: false; customType: string}};
+    primaryKey: ['id'];
+  }>({} as never);
+  // @ts-expect-error - no foo table
+  schema.tables.foo;
+});
+
+test('Missing primary key is an error', () => {
+  expect(() =>
+    createSchema(1, {foo: table('foo').columns({id: string()})}, {}),
+  ).toThrowErrorMatchingInlineSnapshot(
+    `[Error: Table "foo" is missing a primary key]`,
   );
 });
 
 test('Missing table in direct relationship should throw', () => {
-  const bar = {
-    tableName: 'bar',
-    primaryKey: ['id'],
-    columns: {
-      id: {type: 'number'},
-    },
-  } as const;
+  const bar = table('bar')
+    .columns({
+      id: number(),
+    })
+    .primaryKey('id');
 
-  const foo = {
-    tableName: 'foo',
-    primaryKey: ['id'],
-    columns: {
-      id: {type: 'number'},
-      barID: {type: 'number'},
-    },
-    relationships: {
-      barRelation: {
-        sourceField: 'barID',
-        destSchema: () => bar,
-        destField: 'id',
-      },
-    },
-  } as const;
+  const foo = table('foo')
+    .columns({
+      id: number(),
+      barID: number(),
+    })
+    .primaryKey('id');
 
-  const schema = {
-    version: 1,
-    tables: {
-      foo,
-    },
-  } as const;
+  const fooRelationships = relationships(foo, connect => ({
+    barRelation: connect.many({
+      sourceField: ['barID'],
+      destField: ['id'],
+      destSchema: bar,
+    }),
+  }));
 
-  expect(() => createSchema(schema)).toThrowErrorMatchingInlineSnapshot(
-    `[Error: Relationship "foo"."barRelation" destination "bar" is missing in schema]`,
+  expect(() =>
+    createSchema(1, {foo}, {fooRelationships}),
+  ).toThrowErrorMatchingInlineSnapshot(
+    `[Error: For relationship "foo"."barRelation", destination table "bar" is missing in the schema]`,
   );
 });
 
 test('Missing table in junction relationship should throw', () => {
-  const tableA = {
-    tableName: 'tableA',
-    primaryKey: ['id'],
-    columns: {
-      id: {type: 'number'},
-    },
-  } as const;
+  const tableA = table('tableA')
+    .columns({
+      id: number(),
+    })
+    .primaryKey('id');
 
-  const tableB = {
-    tableName: 'tableB',
-    primaryKey: ['id'],
-    columns: {
-      id: {type: 'number'},
-      aID: {type: 'number'},
-    },
-    relationships: {
-      relationBToA: {
-        sourceField: 'aID',
-        destSchema: () => tableA,
-        destField: 'id',
+  const tableB = table('tableB')
+    .columns({
+      id: number(),
+      aID: number(),
+    })
+    .primaryKey('id');
+
+  const tableC = table('tableC')
+    .columns({
+      id: number(),
+      bID: number(),
+      aID: number(),
+    })
+    .primaryKey('id');
+
+  const tableBRelationships = relationships(tableB, connect => ({
+    relationBToA: connect.many({
+      sourceField: ['aID'],
+      destField: ['id'],
+      destSchema: tableA,
+    }),
+  }));
+
+  const tableCRelationships = relationships(tableC, connect => ({
+    relationCToB: connect.many(
+      {
+        sourceField: ['bID'],
+        destField: ['id'],
+        destSchema: tableB,
       },
-    },
-  } as const;
+      {
+        sourceField: ['aID'],
+        destField: ['id'],
+        destSchema: tableA,
+      },
+    ),
+  }));
 
-  const tableC = {
-    tableName: 'tableC',
-    primaryKey: ['id'],
-    columns: {
-      id: {type: 'number'},
-      bID: {type: 'number'},
-    },
-    relationships: {
-      relationCToB: [
-        {
-          sourceField: 'bID',
-          destSchema: () => tableB,
-          destField: 'id',
-        },
-        {
-          sourceField: 'aID',
-          destSchema: () => tableA,
-          destField: 'id',
-        },
-      ],
-    },
-  } as const;
-
-  const schema = {
-    version: 1,
-    tables: {
-      tableB,
-      tableC,
-    },
-  } as const;
-
-  expect(() => createSchema(schema)).toThrowErrorMatchingInlineSnapshot(
-    `[Error: Relationship "tableB"."relationBToA" destination "tableA" is missing in schema]`,
+  expect(() =>
+    createSchema(
+      1,
+      {tableB, tableC},
+      {tableBRelationships, tableCRelationships},
+    ),
+  ).toThrowErrorMatchingInlineSnapshot(
+    `[Error: For relationship "tableB"."relationBToA", destination table "tableA" is missing in the schema]`,
   );
 });
 
 test('Missing column in direct relationship destination should throw', () => {
-  const bar = {
-    tableName: 'bar',
-    primaryKey: ['id'],
-    columns: {
-      id: {type: 'number'},
-    },
-  } as const;
+  const bar = table('bar')
+    .columns({
+      id: number(),
+    })
+    .primaryKey('id');
 
-  const foo = {
-    tableName: 'foo',
-    primaryKey: ['id'],
-    columns: {
-      id: {type: 'number'},
-      barID: {type: 'number'},
-    },
-    relationships: {
-      barRelation: {
-        sourceField: 'barID',
-        destSchema: () => bar,
-        destField: 'missing',
-      },
-    },
-  } as const;
+  const foo = table('foo')
+    .columns({
+      id: number(),
+      barID: number(),
+    })
+    .primaryKey('id');
 
-  const schema = {
-    version: 1,
-    tables: {
-      foo,
-      bar,
-    },
-  } as const;
-
-  expect(() => createSchema(schema)).toThrowErrorMatchingInlineSnapshot(
-    `[Error: Column "missing" is missing in table "bar"]`,
-  );
+  relationships(foo, connect => ({
+    barRelation: connect.many({
+      sourceField: ['barID'],
+      // @ts-expect-error - missing column
+      destField: ['missing'],
+      destSchema: bar,
+    }),
+  }));
 });
 
 test('Missing column in direct relationship source should throw', () => {
-  const bar = {
-    tableName: 'bar',
-    primaryKey: ['id'],
-    columns: {
-      id: {type: 'number'},
-    },
-  } as const;
+  const bar = table('bar')
+    .columns({
+      id: number(),
+    })
+    .primaryKey('id');
 
-  const foo = {
-    tableName: 'foo',
-    primaryKey: ['id'],
-    columns: {
-      id: {type: 'number'},
-      barID: {type: 'number'},
-    },
-    relationships: {
-      barRelation: {
-        sourceField: 'missing',
-        destSchema: () => bar,
-        destField: 'id',
-      },
-    },
-  } as const;
+  const foo = table('foo')
+    .columns({
+      id: number(),
+      barID: number(),
+    })
+    .primaryKey('id');
 
-  const schema = {
-    version: 1,
-    tables: {
-      foo,
-      bar,
-    },
-  } as const;
+  const fooRelationships = relationships(foo, connect => ({
+    barRelation: connect.many({
+      sourceField: ['missing'],
+      destField: ['id'],
+      destSchema: bar,
+    }),
+  }));
 
-  expect(() => createSchema(schema)).toThrowErrorMatchingInlineSnapshot(
-    `[Error: Column "missing" is missing in table "foo"]`,
+  expect(() =>
+    createSchema(1, {bar, foo}, {fooRelationships}),
+  ).toThrowErrorMatchingInlineSnapshot(
+    `[Error: For relationship "foo"."barRelation", the source field "missing" is missing in the table schema "foo"]`,
   );
 });
 
 test('Missing column in junction relationship destination should throw', () => {
-  const tableA = {
-    tableName: 'tableA',
-    primaryKey: ['id'],
-    columns: {
-      id: {type: 'number'},
-    },
-    relationships: {
-      relationAToB: [
-        {
-          sourceField: 'id',
-          destSchema: () => junctionTable,
-          destField: 'aID',
-        },
-        {
-          sourceField: 'aID',
-          destSchema: () => tableB,
-          destField: 'missing',
-        },
-      ],
-    },
-  } as const;
+  const tableB = table('tableB')
+    .columns({
+      id: number(),
+    })
+    .primaryKey('id');
 
-  const tableB = {
-    tableName: 'tableB',
-    primaryKey: ['id'],
-    columns: {
-      id: {type: 'number'},
-    },
-  } as const;
+  const junctionTable = table('junctionTable')
+    .columns({
+      id: number(),
+      aID: number(),
+      bID: number(),
+    })
+    .primaryKey('id');
 
-  const junctionTable = {
-    tableName: 'junctionTable',
-    primaryKey: ['id'],
-    columns: {
-      id: {type: 'number'},
-      aID: {type: 'number'},
-      bID: {type: 'number'},
-    },
-  } as const;
+  const tableA = table('tableA')
+    .columns({
+      id: number(),
+    })
+    .primaryKey('id');
 
-  const schema = {
-    version: 1,
-    tables: {
-      tableA,
-      tableB,
-      junctionTable,
-    },
-  } as const;
-
-  expect(() => createSchema(schema)).toThrowErrorMatchingInlineSnapshot(
-    `[Error: Column "missing" is missing in table "tableB"]`,
-  );
+  relationships(tableA, connect => ({
+    relationAToB: connect.many(
+      {
+        sourceField: ['id'],
+        destField: ['aID'],
+        destSchema: junctionTable,
+      },
+      {
+        sourceField: ['aID'],
+        // @ts-expect-error - missing column
+        destField: ['missing'],
+        destSchema: tableB,
+      },
+    ),
+  }));
 });
 
 test('Missing column in junction relationship source should throw', () => {
-  const tableA = {
-    tableName: 'tableA',
-    primaryKey: ['id'],
-    columns: {
-      id: {type: 'number'},
-    },
-    relationships: {
-      relationAToB: [
-        {
-          sourceField: 'id',
-          destSchema: () => junctionTable,
-          destField: 'aID',
-        },
-        {
-          sourceField: 'missing',
-          destSchema: () => tableB,
-          destField: 'id',
-        },
-      ],
-    },
-  } as const;
+  const tableB = table('tableB')
+    .columns({
+      id: number(),
+    })
+    .primaryKey('id');
 
-  const tableB = {
-    tableName: 'tableB',
-    primaryKey: ['id'],
-    columns: {
-      id: {type: 'number'},
-    },
-  } as const;
+  const junctionTable = table('junctionTable')
+    .columns({
+      id: number(),
+      aID: number(),
+      bID: number(),
+    })
+    .primaryKey('id');
 
-  const junctionTable = {
-    tableName: 'junctionTable',
-    primaryKey: ['id'],
-    columns: {
-      id: {type: 'number'},
-      aID: {type: 'number'},
-      bID: {type: 'number'},
-    },
-  } as const;
+  const tableA = table('tableA')
+    .columns({
+      id: number(),
+    })
+    .primaryKey('id');
 
-  const schema = {
-    version: 1,
-    tables: {
-      tableA,
-      tableB,
-      junctionTable,
-    },
-  } as const;
+  const tableARelationships = relationships(tableA, connect => ({
+    relationAToB: connect.many(
+      {
+        sourceField: ['id'],
+        destField: ['aID'],
+        destSchema: junctionTable,
+      },
+      {
+        sourceField: ['missing'],
+        destField: ['id'],
+        destSchema: tableB,
+      },
+    ),
+  }));
 
-  expect(() => createSchema(schema)).toThrowErrorMatchingInlineSnapshot(
-    `[Error: Column "missing" is missing in table "junctionTable"]`,
+  expect(() =>
+    createSchema(1, {tableA, tableB, junctionTable}, {tableARelationships}),
+  ).toThrowErrorMatchingInlineSnapshot(
+    `[Error: For relationship "tableA"."relationAToB", the source field "missing" is missing in the table schema "junctionTable"]`,
   );
 });
