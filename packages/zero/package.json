@@ -103,10 +103,6 @@
     "./change-protocol/v0": {
       "types": "./out/zero-cache/src/services/change-source/protocol/current/mod.d.ts",
       "default": "./out/zero-cache/src/services/change-source/protocol/current/mod.js"
-    },
-    "./change-protocol": {
-      "types": "./out/zero-cache/src/services/change-source/protocol/mod.d.ts",
-      "default": "./out/change-protocol.js"
     }
   },
   "bin": {
