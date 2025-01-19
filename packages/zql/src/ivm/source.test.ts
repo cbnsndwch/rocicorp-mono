@@ -1506,14 +1506,17 @@ suite('overlay-vs-constraint', () => {
 
 suite('overlay-vs-filter', () => {
   function t(c: {startData: Row[]; filter: Condition; change: SourceChange}) {
-    const sort = [['a', 'asc']] as const;
+    const sort = [
+      ['a', 'asc'],
+      ['b', 'asc'],
+    ] as const;
     const s = createSource(
       'table',
       {
         a: {type: 'number'},
         b: {type: 'boolean'},
       },
-      ['a'],
+      ['a', 'b'],
     );
     for (const row of c.startData) {
       s.push({type: 'add', row});
@@ -1526,12 +1529,12 @@ suite('overlay-vs-filter', () => {
     } catch (e) {
       return {
         e: (e as Error).message,
-        appliedFilters: sourceInput.appliedFilters,
+        fullyAppliedFilters: sourceInput.fullyAppliedFilters,
       };
     }
     return {
       fetches: out.fetches,
-      appliedFilters: sourceInput.appliedFilters,
+      fullyAppliedFilters: sourceInput.fullyAppliedFilters,
     };
   }
 
@@ -1552,7 +1555,6 @@ suite('overlay-vs-filter', () => {
       }),
     ).toMatchInlineSnapshot(`
       {
-        "appliedFilters": true,
         "fetches": [
           [
             {
@@ -1571,6 +1573,7 @@ suite('overlay-vs-filter', () => {
             },
           ],
         ],
+        "fullyAppliedFilters": true,
       }
     `);
   });
@@ -1592,18 +1595,8 @@ suite('overlay-vs-filter', () => {
       }),
     ).toMatchInlineSnapshot(`
       {
-        "appliedFilters": true,
-        "fetches": [
-          [
-            {
-              "relationships": {},
-              "row": {
-                "a": 4,
-                "b": true,
-              },
-            },
-          ],
-        ],
+        "fetches": [],
+        "fullyAppliedFilters": true,
       }
     `);
   });
@@ -1626,7 +1619,6 @@ suite('overlay-vs-filter', () => {
       }),
     ).toMatchInlineSnapshot(`
       {
-        "appliedFilters": true,
         "fetches": [
           [
             {
@@ -1638,6 +1630,7 @@ suite('overlay-vs-filter', () => {
             },
           ],
         ],
+        "fullyAppliedFilters": true,
       }
     `);
   });
@@ -1660,7 +1653,6 @@ suite('overlay-vs-filter', () => {
       }),
     ).toMatchInlineSnapshot(`
       {
-        "appliedFilters": true,
         "fetches": [
           [
             {
@@ -1679,6 +1671,7 @@ suite('overlay-vs-filter', () => {
             },
           ],
         ],
+        "fullyAppliedFilters": true,
       }
     `);
   });
@@ -1707,13 +1700,19 @@ suite('overlay-vs-filter', () => {
             },
           ],
         },
-        change: {type: 'add', row: {a: 1, b: true}},
+        change: {type: 'add', row: {a: 1, b: false}},
       }),
     ).toMatchInlineSnapshot(`
       {
-        "appliedFilters": true,
         "fetches": [
           [
+            {
+              "relationships": {},
+              "row": {
+                "a": 1,
+                "b": false,
+              },
+            },
             {
               "relationships": {},
               "row": {
@@ -1730,6 +1729,7 @@ suite('overlay-vs-filter', () => {
             },
           ],
         ],
+        "fullyAppliedFilters": true,
       }
     `);
   });
@@ -1762,7 +1762,6 @@ suite('overlay-vs-filter', () => {
       }),
     ).toMatchInlineSnapshot(`
       {
-        "appliedFilters": true,
         "fetches": [
           [
             {
@@ -1788,6 +1787,7 @@ suite('overlay-vs-filter', () => {
             },
           ],
         ],
+        "fullyAppliedFilters": true,
       }
     `);
   });
@@ -1829,7 +1829,6 @@ suite('overlay-vs-filter', () => {
       }),
     ).toMatchInlineSnapshot(`
       {
-        "appliedFilters": false,
         "fetches": [
           [
             {
@@ -1855,6 +1854,7 @@ suite('overlay-vs-filter', () => {
             },
           ],
         ],
+        "fullyAppliedFilters": false,
       }
     `);
   });
@@ -1893,13 +1893,19 @@ suite('overlay-vs-filter', () => {
             },
           ],
         },
-        change: {type: 'add', row: {a: 1, b: false}},
+        change: {type: 'add', row: {a: 4, b: false}},
       }),
     ).toMatchInlineSnapshot(`
       {
-        "appliedFilters": false,
         "fetches": [
           [
+            {
+              "relationships": {},
+              "row": {
+                "a": 4,
+                "b": false,
+              },
+            },
             {
               "relationships": {},
               "row": {
@@ -1909,6 +1915,7 @@ suite('overlay-vs-filter', () => {
             },
           ],
         ],
+        "fullyAppliedFilters": false,
       }
     `);
   });

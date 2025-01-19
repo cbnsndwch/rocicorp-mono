@@ -1,7 +1,6 @@
 import {describe, expect, test} from 'vitest';
 import {deepClone} from '../../../shared/src/deep-clone.js';
 import {must} from '../../../shared/src/must.js';
-import {MemorySource} from '../ivm/memory-source.js';
 import {newQuery, type QueryDelegate, QueryImpl} from './query-impl.js';
 import type {AdvancedQuery} from './query-internal.js';
 import {QueryDelegateImpl} from './test/query-delegate.js';
@@ -12,6 +11,7 @@ import {
   createSchema,
   type Schema,
 } from '../../../zero-schema/src/builder/schema-builder.js';
+import {createSource} from '../ivm/test/source-factory.js';
 
 /**
  * Some basic manual tests to get us started.
@@ -88,14 +88,14 @@ function addData(queryDelegate: QueryDelegate) {
       ownerId: null,
     },
   });
-
   commentSource.push({
     type: 'add',
     row: {
       id: '0001',
       authorId: '0001',
       issueId: '0001',
-      body: 'comment 1',
+      text: 'comment 1',
+      createdAt: 1,
     },
   });
   commentSource.push({
@@ -104,7 +104,8 @@ function addData(queryDelegate: QueryDelegate) {
       id: '0002',
       authorId: '0002',
       issueId: '0001',
-      body: 'comment 2',
+      text: 'comment 2',
+      createdAt: 2,
     },
   });
   revisionSource.push({
@@ -450,15 +451,17 @@ describe('joins and filters', () => {
           "comments": [
             {
               "authorId": "0001",
-              "body": "comment 1",
+              "createdAt": 1,
               "id": "0001",
               "issueId": "0001",
+              "text": "comment 1",
             },
             {
               "authorId": "0002",
-              "body": "comment 2",
+              "createdAt": 2,
               "id": "0002",
               "issueId": "0001",
+              "text": "comment 2",
             },
           ],
           "description": "description 1",
@@ -628,7 +631,7 @@ describe('joins and filters', () => {
                 "name": "Alice",
               },
               "authorId": "0001",
-              "body": "comment 1",
+              "createdAt": 1,
               "id": "0001",
               "issueId": "0001",
               "revisions": [
@@ -639,6 +642,7 @@ describe('joins and filters', () => {
                   "text": "revision 1",
                 },
               ],
+              "text": "comment 1",
             },
             {
               "author": {
@@ -655,10 +659,11 @@ describe('joins and filters', () => {
                 "name": "Bob",
               },
               "authorId": "0002",
-              "body": "comment 2",
+              "createdAt": 2,
               "id": "0002",
               "issueId": "0001",
               "revisions": [],
+              "text": "comment 2",
             },
           ],
           "description": "description 1",
@@ -725,15 +730,17 @@ test('run', () => {
         "comments": [
           {
             "authorId": "0001",
-            "body": "comment 1",
+            "createdAt": 1,
             "id": "0001",
             "issueId": "0001",
+            "text": "comment 1",
           },
           {
             "authorId": "0002",
-            "body": "comment 2",
+            "createdAt": 2,
             "id": "0002",
             "issueId": "0001",
+            "text": "comment 2",
           },
         ],
         "description": "description 1",
@@ -1022,16 +1029,8 @@ test('join with compound keys', () => {
   );
 
   const sources = {
-    a: new MemorySource(
-      'a',
-      schema.tables.a.columns,
-      schema.tables.a.primaryKey,
-    ),
-    b: new MemorySource(
-      'b',
-      schema.tables.b.columns,
-      schema.tables.b.primaryKey,
-    ),
+    a: createSource('a', schema.tables.a.columns, schema.tables.a.primaryKey),
+    b: createSource('b', schema.tables.b.columns, schema.tables.b.primaryKey),
   };
 
   const queryDelegate = new QueryDelegateImpl(sources);
@@ -1188,6 +1187,30 @@ test('where exists', () => {
     row: {
       issueId: '0002',
       labelId: '0001',
+    },
+  });
+
+  expect(materialized.data).toEqual([]);
+});
+
+test('where exists before where, see https://bugs.rocicorp.dev/issue/3417', () => {
+  const queryDelegate = new QueryDelegateImpl();
+  const issueSource = must(queryDelegate.getSource('issue'));
+
+  const materialized = newQuery(queryDelegate, schema, 'issue')
+    .whereExists('labels')
+    .where('closed', true)
+    .materialize();
+
+  // push a row that does not match the where filter
+  issueSource.push({
+    type: 'add',
+    row: {
+      id: '0001',
+      title: 'issue 1',
+      description: 'description 1',
+      closed: false,
+      ownerId: '0001',
     },
   });
 
