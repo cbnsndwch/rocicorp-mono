@@ -4,6 +4,8 @@ This is the mono repo for [Rocicorp](https://rocicorp.dev/)'s two main products 
 
 ## Zero
 
+[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/cbnsndwch/rocicorp-mono)
+
 Web site and docs: https://zero.rocicorp.dev/.
 
 ### Code
