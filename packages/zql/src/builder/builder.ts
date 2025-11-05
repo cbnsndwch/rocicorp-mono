@@ -18,6 +18,7 @@ import type {
 } from '../../../zero-protocol/src/ast.ts';
 import type {Row} from '../../../zero-protocol/src/data.ts';
 import type {PrimaryKey} from '../../../zero-protocol/src/primary-key.ts';
+import {Aggregate} from '../ivm/aggregate.ts';
 import {Exists} from '../ivm/exists.ts';
 import {FanIn} from '../ivm/fan-in.ts';
 import {FanOut} from '../ivm/fan-out.ts';
@@ -224,6 +225,25 @@ function buildPipelineInternal(
 
   if (ast.where && !fullyAppliedFilters) {
     end = applyWhere(end, ast.where, delegate, name);
+  }
+
+  // Apply groupBy and aggregates together
+  if ((ast.groupBy && ast.groupBy.length > 0) || (ast.aggregates && ast.aggregates.length > 0)) {
+    const aggName = `${name}:aggregate`;
+    end = delegate.decorateInput(
+      new Aggregate(
+        end,
+        delegate.createStorage(aggName),
+        ast.aggregates ?? [],
+        ast.groupBy ?? [],
+      ),
+      aggName,
+    );
+  }
+
+  // Apply having filter after aggregates
+  if (ast.having) {
+    end = applyWhere(end, ast.having, delegate, `${name}:having`);
   }
 
   if (ast.limit !== undefined) {

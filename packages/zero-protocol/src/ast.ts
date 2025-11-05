@@ -171,6 +171,17 @@ export const correlatedSubquerySchema: v.Type<CorrelatedSubquery> =
     subquery: v.lazy(() => astSchema),
   });
 
+// Aggregation schemas
+export const aggregateFunctionSchema = v.literalUnion('sum', 'count', 'avg', 'min', 'max');
+
+export const aggregateExpressionSchema: v.Type<AggregateExpression> = v.readonlyObject({
+  function: aggregateFunctionSchema,
+  field: v.string().optional(), // undefined for COUNT(*)
+  alias: v.string(), // output field name
+});
+
+export const groupBySchema = v.readonlyArray(v.string());
+
 export const astSchema: v.Type<AST> = v.readonlyObject({
   schema: v.string().optional(),
   table: v.string(),
@@ -185,6 +196,9 @@ export const astSchema: v.Type<AST> = v.readonlyObject({
       exclusive: v.boolean(),
     })
     .optional(),
+  groupBy: groupBySchema.optional(),
+  aggregates: v.readonlyArray(aggregateExpressionSchema).optional(),
+  having: conditionSchema.optional(),
 });
 
 export type Bound = {
@@ -204,6 +218,14 @@ export type EqualityOps = '=' | '!=' | 'IS' | 'IS NOT';
 export type OrderOps = '<' | '>' | '<=' | '>=';
 export type LikeOps = 'LIKE' | 'NOT LIKE' | 'ILIKE' | 'NOT ILIKE';
 export type InOps = 'IN' | 'NOT IN';
+
+export type AggregateFunction = 'sum' | 'count' | 'avg' | 'min' | 'max';
+
+export type AggregateExpression = {
+  readonly function: AggregateFunction;
+  readonly field?: string | undefined; // undefined for COUNT(*)
+  readonly alias: string; // output field name
+};
 
 export type AST = {
   readonly schema?: string | undefined;
@@ -231,6 +253,11 @@ export type AST = {
   readonly start?: Bound | undefined;
   readonly limit?: number | undefined;
   readonly orderBy?: Ordering | undefined;
+  
+  // Aggregation fields
+  readonly groupBy?: readonly string[] | undefined;
+  readonly aggregates?: readonly AggregateExpression[] | undefined;
+  readonly having?: Condition | undefined;
 };
 
 export type Correlation = {
@@ -339,6 +366,7 @@ function transformAST(ast: AST, transform: ASTTransform): Required<AST> {
   };
 
   const where = ast.where ? transform.where(ast.where) : undefined;
+  const having = ast.having ? transform.where(ast.having) : undefined;
   const transformed = {
     schema: ast.schema,
     table: tableName(ast.table),
@@ -373,6 +401,12 @@ function transformAST(ast: AST, transform: ASTTransform): Required<AST> {
       : undefined,
     limit: ast.limit,
     orderBy: ast.orderBy?.map(([col, dir]) => [colName(col), dir] as const),
+    groupBy: ast.groupBy?.map(col => colName(col)),
+    aggregates: ast.aggregates?.map(agg => ({
+      ...agg,
+      field: agg.field ? colName(agg.field) : undefined,
+    })),
+    having: having ? transformWhere(having, ast.table, transform) : undefined,
   };
 
   return transformed;

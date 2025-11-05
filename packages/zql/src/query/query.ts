@@ -375,6 +375,97 @@ export interface Query<
   one(): Query<TSchema, TTable, TReturn | undefined>;
 
   /**
+   * Groups the query results by one or more columns. This is used to perform
+   * aggregations on groups of rows that share the same values for the specified
+   * columns.
+   *
+   * @param fields The column names to group by.
+   *
+   * @returns A new query instance with the applied grouping.
+   *
+   * @example
+   * ```typescript
+   * const query = db.query('orders')
+   *   .groupBy('customerId')
+   *   .sum('amount', 'totalAmount');
+   * ```
+   */
+  groupBy<TSelector extends NoCompoundTypeSelector<PullTableSchema<TTable, TSchema>>>(
+    ...fields: TSelector[]
+  ): Query<TSchema, TTable, TReturn>;
+
+  /**
+   * Adds a SUM aggregate function to compute the sum of values in a column.
+   * Must be used with groupBy() or as a global aggregate.
+   *
+   * @param field The column name to sum.
+   * @param alias The output field name for the sum result.
+   *
+   * @returns A new query instance with the aggregate added.
+   *
+   * @example
+   * ```typescript
+   * const query = db.query('orders')
+   *   .groupBy('customerId')
+   *   .sum('amount', 'totalAmount');
+   * ```
+   */
+  sum<TSelector extends NoCompoundTypeSelector<PullTableSchema<TTable, TSchema>>>(
+    field: TSelector,
+    alias: string,
+  ): Query<TSchema, TTable, TReturn>;
+
+  /**
+   * Adds a COUNT aggregate function to count rows in each group.
+   * Must be used with groupBy() or as a global aggregate.
+   *
+   * @param field Optional column name to count non-null values. If omitted, counts all rows.
+   * @param alias The output field name for the count result.
+   *
+   * @returns A new query instance with the aggregate added.
+   *
+   * @example
+   * ```typescript
+   * const query = db.query('orders')
+   *   .groupBy('customerId')
+   *   .count('*', 'orderCount');
+   * ```
+   */
+  count(alias: string): Query<TSchema, TTable, TReturn>;
+  count<TSelector extends NoCompoundTypeSelector<PullTableSchema<TTable, TSchema>>>(
+    field: TSelector,
+    alias: string,
+  ): Query<TSchema, TTable, TReturn>;
+
+  /**
+   * Filters groups based on aggregate values. Similar to WHERE but operates on
+   * aggregated results. Must be used after aggregates are defined.
+   *
+   * @param field The aggregate field name (alias) or original column to filter on.
+   * @param op The comparison operator.
+   * @param value The value to compare against.
+   *
+   * @returns A new query instance with the having filter applied.
+   *
+   * @example
+   * ```typescript
+   * const query = db.query('orders')
+   *   .groupBy('customerId')
+   *   .sum('amount', 'totalAmount')
+   *   .having('totalAmount', '>', 1000);
+   * ```
+   */
+  having<TOperator extends SimpleOperator>(
+    field: string,
+    op: TOperator,
+    value: number | string | boolean | null,
+  ): Query<TSchema, TTable, TReturn>;
+  having(
+    field: string,
+    value: number | string | boolean | null,
+  ): Query<TSchema, TTable, TReturn>;
+
+  /**
    * Creates a materialized view of the query. This is a view that will be kept
    * in memory and updated as the query results change.
    *
