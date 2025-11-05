@@ -368,7 +368,8 @@ export class Aggregate implements Operator {
       
       if (agg.function === 'min' && agg.field) {
         const value = row[agg.field];
-        if (value !== null && value !== undefined) {
+        // Use != null to check both null and undefined
+        if (value != null) {
           if (state.min === undefined || compareValues(value, state.min) < 0) {
             state.min = value;
           }
@@ -377,7 +378,8 @@ export class Aggregate implements Operator {
       
       if (agg.function === 'max' && agg.field) {
         const value = row[agg.field];
-        if (value !== null && value !== undefined) {
+        // Use != null to check both null and undefined
+        if (value != null) {
           if (state.max === undefined || compareValues(value, state.max) > 0) {
             state.max = value;
           }
@@ -402,7 +404,7 @@ export class Aggregate implements Operator {
         }
       }
       
-      // LIMITATION: Min/max values cannot be maintained correctly during incremental
+      // TODO: LIMITATION: Min/max values cannot be maintained correctly during incremental
       // removal without storing all group values. When a row is removed, if it was
       // the min or max value, the aggregate result becomes stale.
       // A production implementation would need to:
