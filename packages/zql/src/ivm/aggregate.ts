@@ -52,7 +52,7 @@ export class Aggregate implements Operator {
     groupByFields: readonly string[],
   ) {
     assert(aggregates.length > 0, 'Must specify at least one aggregate');
-    assert(groupByFields.length > 0, 'Must specify at least one groupBy field');
+    // Note: groupByFields can be empty for global aggregations (e.g., SELECT COUNT(*) FROM table)
     input.setOutput(this);
     this.#input = input;
     this.#storage = storage;
@@ -317,6 +317,10 @@ export class Aggregate implements Operator {
   }
 
   #getGroupKey(row: Row): string {
+    if (this.#groupByFields.length === 0) {
+      // Global aggregation - single group for all rows
+      return '__global__';
+    }
     const values = this.#groupByFields.map(field => row[field]);
     return JSON.stringify(values);
   }
@@ -364,15 +368,19 @@ export class Aggregate implements Operator {
       
       if (agg.function === 'min' && agg.field) {
         const value = row[agg.field];
-        if (state.min === undefined || (value !== null && value < state.min)) {
-          state.min = value;
+        if (value !== null && value !== undefined) {
+          if (state.min === undefined || compareValues(value, state.min) < 0) {
+            state.min = value;
+          }
         }
       }
       
       if (agg.function === 'max' && agg.field) {
         const value = row[agg.field];
-        if (state.max === undefined || (value !== null && value > state.max)) {
-          state.max = value;
+        if (value !== null && value !== undefined) {
+          if (state.max === undefined || compareValues(value, state.max) > 0) {
+            state.max = value;
+          }
         }
       }
     }
@@ -394,11 +402,14 @@ export class Aggregate implements Operator {
         }
       }
       
-      // Note: For min/max, we can't easily maintain them incrementally on removal
-      // without storing all values. A full implementation would need to either:
-      // 1. Store all values for the group
-      // 2. Re-fetch from the source when the min/max is removed
-      // For now, we keep the existing value (which may be incorrect after removal)
+      // LIMITATION: Min/max values cannot be maintained correctly during incremental
+      // removal without storing all group values. When a row is removed, if it was
+      // the min or max value, the aggregate result becomes stale.
+      // A production implementation would need to:
+      // 1. Store all values for min/max groups (memory intensive)
+      // 2. Re-scan the group from source when the min/max value is removed
+      // 3. Use a different data structure (e.g., heap) for efficient min/max tracking
+      // For now, we accept this limitation and keep the existing value.
     }
   }
 

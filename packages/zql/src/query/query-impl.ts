@@ -538,6 +538,8 @@ export abstract class AbstractQuery<
     fieldOrAlias: string,
     alias?: string,
   ): Query<TSchema, TTable, TReturn> => {
+    // If alias is provided, first param is field name
+    // If alias is not provided, first param is alias (COUNT(*))
     const actualAlias = alias ?? fieldOrAlias;
     const actualField = alias ? fieldOrAlias : undefined;
     
