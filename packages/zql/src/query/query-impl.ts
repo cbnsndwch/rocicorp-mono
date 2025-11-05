@@ -490,6 +490,110 @@ export abstract class AbstractQuery<
     );
   };
 
+  groupBy = (
+    ...fields: string[]
+  ): Query<TSchema, TTable, TReturn> => {
+    if (this.#currentJunction) {
+      throw new NotImplementedError(
+        'Group by is not supported in junction relationships yet. Junction relationship being grouped: ' +
+          this.#currentJunction,
+      );
+    }
+    return this[newQuerySymbol](
+      this._delegate,
+      this.#schema,
+      this.#tableName,
+      {
+        ...this._ast,
+        groupBy: [...(this._ast.groupBy ?? []), ...fields],
+      },
+      this.format,
+      this.customQueryID,
+      this.#currentJunction,
+    );
+  };
+
+  sum = (
+    field: string,
+    alias: string,
+  ): Query<TSchema, TTable, TReturn> => {
+    return this[newQuerySymbol](
+      this._delegate,
+      this.#schema,
+      this.#tableName,
+      {
+        ...this._ast,
+        aggregates: [
+          ...(this._ast.aggregates ?? []),
+          {function: 'sum', field, alias},
+        ],
+      },
+      this.format,
+      this.customQueryID,
+      this.#currentJunction,
+    );
+  };
+
+  count = (
+    fieldOrAlias: string,
+    alias?: string,
+  ): Query<TSchema, TTable, TReturn> => {
+    const actualAlias = alias ?? fieldOrAlias;
+    const actualField = alias ? fieldOrAlias : undefined;
+    
+    return this[newQuerySymbol](
+      this._delegate,
+      this.#schema,
+      this.#tableName,
+      {
+        ...this._ast,
+        aggregates: [
+          ...(this._ast.aggregates ?? []),
+          {function: 'count', field: actualField, alias: actualAlias},
+        ],
+      },
+      this.format,
+      this.customQueryID,
+      this.#currentJunction,
+    );
+  };
+
+  having = (
+    field: string,
+    opOrValue: SimpleOperator | GetFilterType<any, any, any> | Parameter,
+    value?: GetFilterType<any, any, any> | Parameter,
+  ): Query<TSchema, TTable, TReturn> => {
+    let cond: Condition;
+    
+    if (value === undefined) {
+      // Two-argument form: field and value (operator is '=')
+      cond = cmp(field, '=', opOrValue);
+    } else {
+      // Three-argument form: field, operator, and value
+      cond = cmp(field, opOrValue as SimpleOperator, value);
+    }
+
+    const existingHaving = this._ast.having;
+    if (existingHaving) {
+      cond = and(existingHaving, cond);
+    }
+
+    const having = simplifyCondition(cond);
+
+    return this[newQuerySymbol](
+      this._delegate,
+      this.#schema,
+      this.#tableName,
+      {
+        ...this._ast,
+        having,
+      },
+      this.format,
+      this.customQueryID,
+      this.#currentJunction,
+    );
+  };
+
   protected _exists = (
     relationship: string,
     cb: (query: AnyQuery) => AnyQuery = q => q,
